@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../data/data_source/dio_service.dart';
-import '../../data/models/news_model.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../cubits/news_cubit.dart';
+import '../../cubits/news_state.dart';
 import '../widgets/news_card.dart';
 import 'news_detail_screen.dart';
 
@@ -13,28 +14,14 @@ class NewsListScreen extends StatefulWidget {
 }
 
 class _NewsListScreenState extends State<NewsListScreen> {
-  
-  String currentSearchQuery = "Egypt"; 
-  
-  List<NewsModel> newsList = [];
-  bool isLoading = true;
-  bool isLoadingMore = false;
-  String? errorMessage;
-  
-  int currentPage = 1;
   final ScrollController _scrollController = ScrollController();
-  final DioService _dioService = DioService();
 
   @override
   void initState() {
     super.initState();
-    _fetchNews(isRefresh: true);
-
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
-        if (!isLoading && !isLoadingMore) {
-          _fetchNews(isRefresh: false);
-        }
+        context.read<NewsCubit>().loadNews();
       }
     });
   }
@@ -43,57 +30,6 @@ class _NewsListScreenState extends State<NewsListScreen> {
   void dispose() {
     _scrollController.dispose();
     super.dispose();
-  }
-
-
-  void _updateSearchQuery(String newQuery) {
-
-    currentSearchQuery = newQuery.trim();
-    _fetchNews(isRefresh: true);
-  }
-
-  Future<void> _fetchNews({bool isRefresh = false}) async {
-    if (isRefresh) {
-      if (mounted) {
-        setState(() {
-          isLoading = true;
-          errorMessage = null;
-          currentPage = 1;
-          newsList.clear();
-        });
-      }
-    } else {
-      if (mounted) {
-        setState(() {
-          isLoadingMore = true;
-        });
-      }
-    }
-
-    try {
-
-      final newItems = await _dioService.getNews(
-        page: currentPage, 
-        query: currentSearchQuery.isEmpty ? "Egypt" : currentSearchQuery,
-      );
-
-      if (mounted) {
-        setState(() {
-          newsList.addAll(newItems);
-          currentPage++;
-          isLoading = false;
-          isLoadingMore = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          if (newsList.isEmpty) errorMessage = e.toString();
-          isLoading = false;
-          isLoadingMore = false;
-        });
-      }
-    }
   }
 
   @override
@@ -105,20 +41,20 @@ class _NewsListScreenState extends State<NewsListScreen> {
       ),
       body: Column(
         children: [
-          
           SearchBarWidget(
-            onSearch: _updateSearchQuery,
-            initialValue: currentSearchQuery, 
+            onSearch: (query) {
+              context.read<NewsCubit>().loadNews(query: query, isRefresh: true);
+            },
           ),
-          
+
           Expanded(
-            child: Builder(
-              builder: (context) {
-                if (isLoading && newsList.isEmpty) {
+            child: BlocBuilder<NewsCubit, NewsState>(
+              builder: (context, state) {
+                if (state is NewsLoading) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
-                if (errorMessage != null && newsList.isEmpty) {
+                if (state is NewsError) {
                   return Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -126,47 +62,51 @@ class _NewsListScreenState extends State<NewsListScreen> {
                         const Icon(Icons.error_outline, size: 48, color: Colors.red),
                         Padding(
                           padding: const EdgeInsets.all(8.0),
-                          child: Text(errorMessage!, textAlign: TextAlign.center),
+                          child: Text(state.message, textAlign: TextAlign.center),
                         ),
                         ElevatedButton(
-                          onPressed: () => _fetchNews(isRefresh: true),
+                          onPressed: () => context.read<NewsCubit>().loadNews(isRefresh: true),
                           child: const Text("Retry"),
                         )
                       ],
                     ),
                   );
                 }
-                
-                if (newsList.isEmpty) {
-                   return const Center(child: Text("No news found!"));
+
+                if (state is NewsLoaded) {
+                  if (state.news.isEmpty) {
+                    return const Center(child: Text("No news found!"));
+                  }
+
+                  return ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.only(bottom: 20),
+                    itemCount: state.news.length + (state.isLoadingMore ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == state.news.length) {
+                        return const Padding(
+                          padding: EdgeInsets.all(20.0),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+
+                      final newsItem = state.news[index];
+                      return InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => NewsDetailScreen(news: newsItem),
+                            ),
+                          );
+                        },
+                        child: NewsCard(news: newsItem),
+                      );
+                    },
+                  );
                 }
 
-                return ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.only(bottom: 20),
-                  itemCount: newsList.length + (isLoadingMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == newsList.length) {
-                      return const Padding(
-                        padding: EdgeInsets.all(20.0),
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-
-                    final newsItem = newsList[index];
-                    return InkWell(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => NewsDetailScreen(news: newsItem),
-                          ),
-                        );
-                      },
-                      child: NewsCard(news: newsItem),
-                    );
-                  },
-                );
+                return const SizedBox(); 
               },
             ),
           ),
@@ -176,16 +116,10 @@ class _NewsListScreenState extends State<NewsListScreen> {
   }
 }
 
-
 class SearchBarWidget extends StatefulWidget {
   final Function(String) onSearch;
-  final String initialValue;
-
-  const SearchBarWidget({
-    super.key, 
-    required this.onSearch,
-    required this.initialValue,
-  });
+  
+  const SearchBarWidget({super.key, required this.onSearch});
 
   @override
   State<SearchBarWidget> createState() => _SearchBarWidgetState();
@@ -198,7 +132,7 @@ class _SearchBarWidgetState extends State<SearchBarWidget> {
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialValue);
+    _controller = TextEditingController(text: "Egypt"); 
   }
 
   @override
@@ -223,28 +157,21 @@ class _SearchBarWidgetState extends State<SearchBarWidget> {
       child: TextField(
         controller: _controller,
         onChanged: _onChanged,
-        keyboardType: TextInputType.text, 
+        keyboardType: TextInputType.text,
         textInputAction: TextInputAction.search,
-        enableSuggestions: true,
-        
         style: const TextStyle(color: Colors.black),
         decoration: InputDecoration(
           hintText: "Search news...",
           fillColor: Colors.white,
           filled: true,
           prefixIcon: const Icon(Icons.search, color: Colors.grey),
-          
-        
           suffixIcon: IconButton(
             icon: const Icon(Icons.clear, color: Colors.grey),
             onPressed: () {
-          
               _controller.clear();
-              
               widget.onSearch("");
             },
           ),
-          
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(30),
             borderSide: BorderSide.none,

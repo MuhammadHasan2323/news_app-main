@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'cubits/news_cubit.dart';
 import 'presentation/screens/splash_screen.dart';
 import 'theme.dart';
 
@@ -11,11 +13,15 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'News App',
-      theme: appTheme, 
-      home: const SplashScreen(),
+   
+    return BlocProvider(
+      create: (context) => NewsCubit()..loadNews(isRefresh: true),
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Newsly',
+        theme: appTheme,
+        home: const SplashScreen(),
+      ),
     );
   }
 }
